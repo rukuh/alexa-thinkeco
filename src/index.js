@@ -107,6 +107,7 @@ var handleThermostateRequest = function( intent, session, response ) {
   console.log( intent.toString() );
   getCookiesFromThinkEco( intent.slots.location.value, intent.slots.state.value, function( data ) {
     if( data ){
+      var text = data;
       var cardText = 'The thermostat is set to: ' + intent.slots.state.value;
     } else {
       var text = 'That value does not exist.'
