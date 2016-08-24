@@ -1,12 +1,16 @@
-require('dotenv').load();
-
 var https      = require( 'https' )
   , AlexaSkill = require( './AlexaSkill' )
+  , env        = require('./env.js')
   , APP_ID     = process.env.APP_ID
-  , username   = process.env.username
-  , password   = process.env.password;
+  , username   = process.env.USERNAME
+  , password   = process.env.PASSWORD;
 
-var getCookiesFromThinkEco = function( location, temperature, callback ) {
+const locations = {
+  'living room': '1966',
+  'bedroom': '1967'
+};
+
+function getCookiesFromThinkEco( location, temperature, state, callback ) {
   var options = {
     host: 'mymodlet.com',
     path: '/Account/Login?loginForm.Email=' + username + '&loginForm.Password=' + encodeURIComponent( password ) + '&loginForm.RememberMe=True&ReturnUrl=',
@@ -20,45 +24,57 @@ var getCookiesFromThinkEco = function( location, temperature, callback ) {
 
   var req = https.request( options, function( res ) {
     res.on( 'data', function( body ) {
-      command( res.headers[ 'set-cookie' ], getLocation( location ), getThermostate( temperature ), callback );
+      getThermostat( res.headers[ 'set-cookie' ], location, temperature, state, callback );
     });
   });
+
   req.on( 'error', function( e ) {
     console.log( 'Request error: ' + e.message );
   });
+
   req.end();
 };
 
-function getLocation( value ) {
-  switch( value ) {
-    case 'living room':
-      return 1966;
-    case 'bedroom':
-      return 1967;
-  }
+function getThermostat( cookies, location, temperature, state, callback ) {
+  var options = {
+    host: 'mymodlet.com',
+    path: '/SmartAC/UserSettingsTable',
+    port: '443',
+    headers: {
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'Content-Length': 0,
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Cookie': cookies.join( '; ' )
+    },
+    method: 'POST',
+    gzip: true
+  };
+
+  var req = https.request( options, function( res ) {
+    var response = '';
+
+    res.on('data', function( body ) {
+      response += body;
+    });
+
+    res.on('end', function() {
+      var data = JSON.parse( response ).match( /((select id="[0-9]+")|(option value="[0-9]+" selected))/g ).toString().match( /[0-9]+/g );
+      setThermostat( cookies , locations[location], temperature ? temperature : thermostatObject( data )[ locations[ location ] ], state, callback );
+    });
+  });
+
+  req.on( 'error', function( e ) {
+    console.log( 'Request error: ' + e.message );
+  });
+
+  req.end();
 }
 
-function getThermostate( value ) {
-  switch( value ) {
-    case 'on':
-      return 77;
-    case 'off':
-      return 0;
-    default:
-      return value;
-  }
-}
-
-function command( cookies, applianceId, temperature, callback ) {
-  var thermostate = true;
-  if ( temperature == 0 ) {
-    temperature = 77;
-    thermostate = false;
-  }
+function setThermostat( cookies, location, temperature, state, callback ) {
   var data = JSON.stringify( {
-    "applianceId": applianceId,
+    "applianceId": location,
     "targetTemperature": temperature,
-    "thermostated": thermostate
+    "thermostated": ( state == 'on' )
   });
 
   var options = {
@@ -72,50 +88,72 @@ function command( cookies, applianceId, temperature, callback ) {
       'Content-Type': 'application/json; charset=UTF-8',
       'Cookie': cookies.join( '; ' )
     },
-    method: 'POST'
+    method: 'POST',
+    gzip: true
   };
 
   var req = https.request( options, function( res ) {
+    var response = '';
+
     res.on('data', function( body ) {
-      callback( temperature );
+      response += body;
+    });
+
+    res.on('end', function() {
+      callback( [ temperature, state ] );
     });
   });
+
   req.on( 'error', function( e ) {
     console.log( 'Request error: ' + e.message );
   });
+
   req.write( data );
+
   req.end();
+}
+
+function thermostatObject( data ) {
+  var object = {};
+
+  for( i = 0 ; i < data.length ; i++ ) {
+    var temp = data.shift();
+    object[temp] = data[0];
+    data.shift();
+  }
+
+  return object;
 }
 
 var handleThermostatRequest = function( intent, session, response ) {
   console.log( intent.toString() );
-  getCookiesFromThinkEco( intent.slots.location.value, intent.slots.temperature.value, function( data ) {
+  getCookiesFromThinkEco( intent.slots.location.value, intent.slots.temperature.value, 'on', function( data ) {
     if( data ){
       var text = data;
-      var cardText = 'The thermostat is set to: ' + text;
+      var cardText = 'The thermostat is set to: ' + text[ 0 ];
     } else {
       var text = 'That value does not exist.'
       var cardText = text;
     }
 
-    var heading = 'Thermostat set to: ' + intent.slots.temperature.value;
-    response.tellWithCard( text, heading, cardText );
+    var heading = 'Thermostat turned ' + text[ 1 ];
+    response.tellWithCard( 'The ' + intents.slots.location.value + ' thermostat is set to ' + text[ 0 ], heading, cardText );
   });
 };
 
 var handleThermostateRequest = function( intent, session, response ) {
   console.log( intent.toString() );
-  getCookiesFromThinkEco( intent.slots.location.value, intent.slots.state.value, function( data ) {
+  getCookiesFromThinkEco( intent.slots.location.value, '', intent.slots.state.value, function( data ) {
     if( data ){
       var text = data;
-      var cardText = 'The thermostat is set to: ' + intent.slots.state.value;
+      var cardText = 'The thermostat is set to: ' + text[ 0 ];
     } else {
       var text = 'That value does not exist.'
       var cardText = text;
     }
 
-    var heading = 'Thermostat set to: ' + intent.slots.state.value;
-    response.tellWithCard( text, heading, cardText );
+    var heading = 'Thermostat turned ' + text[ 1 ];
+    response.tellWithCard( 'The ' + intent.slots.location.value + ' thermostat is turned ' + text[ 1 ], heading, cardText );
   });
 };
 
