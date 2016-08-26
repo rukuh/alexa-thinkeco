@@ -1,25 +1,22 @@
-var https      = require( 'https' )
-  , AlexaSkill = require( './AlexaSkill' )
-  , env        = require('./env.js')
-  , APP_ID     = process.env.APP_ID
-  , username   = process.env.USERNAME
-  , password   = process.env.PASSWORD;
+var https       = require( 'https' )
+  , AlexaSkill  = require( './AlexaSkill' )
+  , env         = require( './env.js' )
+  , APP_ID      = process.env.APP_ID
+  , username    = process.env.USERNAME
+  , password    = process.env.PASSWORD;
 
-const locations = {
-  'living room': '1966',
-  'bedroom': '1967'
-};
+const applianceId = { 'living room': '1966', 'bedroom': '1967' };
 
 function getCookiesFromThinkEco( location, temperature, state, callback ) {
   var options = {
-    host: 'mymodlet.com',
-    path: '/Account/Login?loginForm.Email=' + username + '&loginForm.Password=' + encodeURIComponent( password ) + '&loginForm.RememberMe=True&ReturnUrl=',
-    port: '443',
+    host   : 'mymodlet.com',
+    path   : '/Account/Login?loginForm.Email=' + username + '&loginForm.Password=' + encodeURIComponent( password ) + '&loginForm.RememberMe=True&ReturnUrl=',
+    port   : '443',
+    method : 'POST',
     headers: {
-      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'Accept'      : 'application/json, text/javascript, */*; q=0.01',
       'Content-Type': 'application/json; charset=UTF-8'
-    },
-    method: 'POST'
+    }
   };
 
   var req = https.request( options, function( res ) {
@@ -37,29 +34,28 @@ function getCookiesFromThinkEco( location, temperature, state, callback ) {
 
 function getThermostat( cookies, location, temperature, state, callback ) {
   var options = {
-    host: 'mymodlet.com',
-    path: '/SmartAC/UserSettingsTable',
-    port: '443',
+    host   : 'mymodlet.com',
+    path   : '/SmartAC/UserSettingsTable',
+    port   : '443',
+    method : 'POST',
+    gzip   : true,
     headers: {
-      'Accept': 'application/json, text/javascript, */*; q=0.01',
-      'Content-Length': 0,
-      'Content-Type': 'application/json; charset=UTF-8',
-      'Cookie': cookies.join( '; ' )
-    },
-    method: 'POST',
-    gzip: true
+      'Accept'        : 'application/json, text/javascript, */*; q=0.01',
+      'Content-Type'  : 'application/json; charset=UTF-8',
+      'Cookie'        : cookies.join( '; ' )
+    }
   };
 
   var req = https.request( options, function( res ) {
     var response = '';
 
-    res.on('data', function( body ) {
+    res.on( 'data', function( body ) {
       response += body;
     });
 
-    res.on('end', function() {
+    res.on( 'end', function() {
       var data = JSON.parse( response ).match( /((select id="[0-9]+")|(option value="[0-9]+" selected))/g ).toString().match( /[0-9]+/g );
-      setThermostat( cookies , locations[location], temperature ? temperature : thermostatObject( data )[ locations[ location ] ], state, callback );
+      setThermostat( cookies , applianceId[ location ], temperature ? temperature : thermostatObject( data )[ applianceId[ location ] ], state, callback );
     });
   });
 
@@ -72,34 +68,34 @@ function getThermostat( cookies, location, temperature, state, callback ) {
 
 function setThermostat( cookies, location, temperature, state, callback ) {
   var data = JSON.stringify( {
-    "applianceId": location,
-    "targetTemperature": temperature,
-    "thermostated": ( state == 'on' )
+    'applianceId'      : location,
+    'targetTemperature': temperature,
+    'thermostated'     : ( state == 'on' )
   });
 
   var options = {
-    host: 'mymodlet.com',
-    path: '/SmartAC/UserSettings',
-    port: '443',
+    host   : 'mymodlet.com',
+    path   : '/SmartAC/UserSettings',
+    port   : '443',
+    method : 'POST',
+    gzip   : true,
     headers: {
-      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'Accept'         : 'application/json, text/javascript, */*; q=0.01',
       'Accept-Encoding': 'gzip, deflate, br',
-      'Content-Length': Buffer.byteLength( data ),
-      'Content-Type': 'application/json; charset=UTF-8',
-      'Cookie': cookies.join( '; ' )
-    },
-    method: 'POST',
-    gzip: true
+      'Content-Length' : Buffer.byteLength( data ),
+      'Content-Type'   : 'application/json; charset=UTF-8',
+      'Cookie'         : cookies.join( '; ' )
+    }
   };
 
   var req = https.request( options, function( res ) {
     var response = '';
 
-    res.on('data', function( body ) {
+    res.on( 'data', function( body ) {
       response += body;
     });
 
-    res.on('end', function() {
+    res.on( 'end', function() {
       callback( [ temperature, state ] );
     });
   });
@@ -118,42 +114,45 @@ function thermostatObject( data ) {
 
   for( i = 0 ; i < data.length ; i++ ) {
     var temp = data.shift();
-    object[temp] = data[0];
-    data.shift();
+    object[ temp ] = data.shift();
   }
 
   return object;
 }
 
+function upperCase( string ) {
+  return string[ 0 ].toUpperCase() + string.slice( 1 );
+}
+
 var handleThermostatRequest = function( intent, session, response ) {
   console.log( intent.toString() );
   getCookiesFromThinkEco( intent.slots.location.value, intent.slots.temperature.value, 'on', function( data ) {
-    if( data ){
+    if( data ) {
       var text = data;
-      var cardText = 'The thermostat is set to: ' + text[ 0 ];
+      var cardText = 'The ' + intent.slots.location.value + ' thermostat is set to: ' + text[ 0 ];
     } else {
       var text = 'That value does not exist.'
       var cardText = text;
     }
 
-    var heading = 'Thermostat turned ' + text[ 1 ];
-    response.tellWithCard( 'The ' + intents.slots.location.value + ' thermostat is set to ' + text[ 0 ], heading, cardText );
+    var heading = upperCase( intent.slots.location.value ) + ' thermostat turned ' + text[ 1 ];
+    response.tellWithCard( upperCase( intent.slots.location.value ) + ' thermostat set to ' + text[ 0 ], heading, cardText );
   });
 };
 
 var handleThermostateRequest = function( intent, session, response ) {
   console.log( intent.toString() );
   getCookiesFromThinkEco( intent.slots.location.value, '', intent.slots.state.value, function( data ) {
-    if( data ){
+    if( data ) {
       var text = data;
-      var cardText = 'The thermostat is set to: ' + text[ 0 ];
+      var cardText = 'The ' + intent.slots.location.value + ' AC turned: ' + text[ 1 ];
     } else {
       var text = 'That value does not exist.'
       var cardText = text;
     }
 
-    var heading = 'Thermostat turned ' + text[ 1 ];
-    response.tellWithCard( 'The ' + intent.slots.location.value + ' thermostat is turned ' + text[ 1 ], heading, cardText );
+    var heading = upperCase( intent.slots.location.value ) + ' AC ' + text[ 1 ];
+    response.tellWithCard( upperCase( intent.slots.location.value ) + ' AC turned ' + text[ 1 ], heading, cardText );
   });
 };
 
