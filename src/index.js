@@ -5,154 +5,171 @@ var https = require('https'),
 	applianceIDs = process.env.applianceIDs,
 	username = process.env.username,
 	password = process.env.password;
-	
-function login() {
-	var body = {
-		data: JSON.stringify({
-			Email: username,
-			Password: password
-		})
-	};
-	
-	var options = {
-		host: 'web.mymodlet.com',
-		path: '/Account/Login',
-		method: 'post',
-		headers: { 'Content-Type':'application/json' }
-	};
-	
-	return new Promise((resolve, reject) => {
-		var req = https.request(options, res => {
-			if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('login::statusCode=' + res.statusCode));
-			res.on('data', () => resolve(res.headers['set-cookie']));
-		});
-		req.on('error', err => reject(err));
-		req.write(JSON.stringify(body));
-		req.end();
-	});
-};
 
-function updateData(intent, cookies) {
-	var options = {
-		host: 'web.mymodlet.com',
-		path: '/Devices/UpdateData',
-		method: 'get',
-		gzip: true,
-		headers: { 'Content-Type': 'application/json', 'Cookie': cookies.join('; ') }
-	};
+class ThinkEcoAPI {
+	constructor(intent) {
+		this.cookies;
+		this.location = intent.slots.location.value;
+		this.state = intent.slots.state && intent.slots.state.value || 'on';
+		this.temperature = intent.slots.temperature && intent.slots.temperature.value;
+	}
 	
-	return new Promise((resolve, reject) => {
-		var req = https.request(options, res => {
-			var response = '';
-			
-			if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('updateData::statusCode=' + res.statusCode));
-			res.on('data', body => response += body);
-			res.on('end', () => {
-				const parsedJSON = JSON.parse(JSON.parse(response));
-				const modlet = parsedJSON.Devices.find(device => device.deviceId == applianceIDs[intent.slots.location.value]);
-				const smartAC = parsedJSON.SmartACs.find(smartAC => smartAC.thermostat.associatedModletId == modlet.modletId);
-				resolve(smartAC);
+	async login() {
+		var body = {
+			data: JSON.stringify({
+				Email: username,
+				Password: password
+			})
+		};
+		
+		var options = {
+			host: 'web.mymodlet.com',
+			path: '/Account/Login',
+			method: 'post',
+			headers: { 'Content-Type':'application/json' }
+		};
+		
+		this.cookies = await new Promise((resolve, reject) => {
+			var req = https.request(options, res => {
+				if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('login::statusCode=' + res.statusCode));
+				res.on('data', () => resolve(res.headers['set-cookie']));
 			});
+			req.on('error', err => reject(err));
+			req.write(JSON.stringify(body));
+			req.end();
 		});
-		req.on('error', err => reject(err));
-		req.end();
-	});
-}
+	}	
 
-function switchDevice(intent, cookies) {
-	var body = {
-		data: JSON.stringify({
-			id: applianceIDs[intent.slots.location.value]
-		})
-	 };
+	async updateData() {
+		if (!this.cookies) await this.login();
+		
+		var options = {
+			host: 'web.mymodlet.com',
+			path: '/Devices/UpdateData',
+			method: 'get',
+			gzip: true,
+			headers: { 'Content-Type': 'application/json', 'Cookie': this.cookies.join('; ') }
+		};
+		
+		return new Promise((resolve, reject) => {
+			var req = https.request(options, res => {
+				var response = '';
+				
+				if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('updateData::statusCode=' + res.statusCode));
+				res.on('data', body => response += body);
+				res.on('end', () => {
+					const parsedJSON = JSON.parse(JSON.parse(response));
+					const modlet = parsedJSON.Devices.find(device => device.deviceId == applianceIDs[this.location]);
+					const smartAC = parsedJSON.SmartACs.find(smartAC => smartAC.thermostat.associatedModletId == modlet.modletId);
+					resolve(smartAC);
+				});
+			});
+			req.on('error', err => reject(err));
+			req.end();
+		});
+	}
 
-	var options = {
-		host: 'web.mymodlet.com',
-		path: `/Devices/Switch${sentenceCase(intent.slots.state.value)}`,
-		method: 'post',
-		gzip: true,
-		headers: {
-			'Content-Type': 'application/json',
-			'Cookie': cookies.join('; ')
-		}
-	};
+	async switchDevice() {
+		if (!this.cookies) await this.login();
+		
+		var body = {
+			data: JSON.stringify({
+				id: applianceIDs[this.location]
+			})
+		 };
 	
-	return new Promise((resolve, reject) => {
-		var req = https.request(options, res => {
-			var response = '';
-			
-			if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('switchDevice::statusCode=' + res.statusCode));
-			res.on('data', body => response += body);
-			res.on('end', () => resolve(response));
+		var options = {
+			host: 'web.mymodlet.com',
+			path: `/Devices/Switch${sentenceCase(this.state)}`,
+			method: 'post',
+			gzip: true,
+			headers: {
+				'Content-Type': 'application/json',
+				'Cookie': this.cookies.join('; ')
+			}
+		};
+		
+		return new Promise((resolve, reject) => {
+			var req = https.request(options, res => {
+				var response = '';
+				
+				if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('switchDevice::statusCode=' + res.statusCode));
+				res.on('data', body => response += body);
+				res.on('end', () => resolve(response));
+			});
+			req.on('error', err => reject(err));
+			req.write(JSON.stringify(body));
+			req.end();
 		});
-		req.on('error', err => reject(err));
-		req.write(JSON.stringify(body));
-		req.end();
-	});
-}
+	}
 
-function userSettingsUpdate(intent, cookies) {
-	var body = {
-		data: JSON.stringify({
-			'DeviceId': applianceIDs[intent.slots.location.value],
-			'TargetTemperature': intent.slots.temperature.value,
-			'IsThermostated': (intent.slots.state.value == 'on')
-		})
-	};
-
-	var options = {
-		host   : 'web.mymodlet.com',
-		path   : '/Devices/UserSettingsUpdate',
-		method : 'post',
-		headers: { 'Content-Type': 'application/json', 'Cookie': cookies.join('; ') }
-	};
+	async userSettingsUpdate() {
+		if (!this.cookies) await this.login();
+		
+		var body = {
+			data: JSON.stringify({
+				'DeviceId': applianceIDs[this.location],
+				'TargetTemperature': this.temperature,
+				'IsThermostated': (this.state == 'on')
+			})
+		};
 	
-	return new Promise((resolve, reject) => {
-		var req = https.request(options, res => {
-			var response = '';
-			
-			if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('userSettingsUpdate::statusCode=' + res.statusCode));
-			res.on('data', body => response += body);
-			res.on('end', () => resolve(response));
+		var options = {
+			host   : 'web.mymodlet.com',
+			path   : '/Devices/UserSettingsUpdate',
+			method : 'post',
+			headers: { 'Content-Type': 'application/json', 'Cookie': this.cookies.join('; ') }
+		};
+		
+		return new Promise((resolve, reject) => {
+			var req = https.request(options, res => {
+				var response = '';
+				
+				if (res.statusCode < 200 || res.statusCode >= 300) reject(new Error('userSettingsUpdate::statusCode=' + res.statusCode));
+				res.on('data', body => response += body);
+				res.on('end', () => resolve(response));
+			});
+			req.on('error', err => reject(err));
+			req.write(JSON.stringify(body));
+			req.end();
 		});
-		req.on('error', err => reject(err));
-		req.write(JSON.stringify(body));
-		req.end();
-	});
+	}
 }
 
 var handleThermostatRequest = async (intent, session, response) => {
 	console.log(JSON.stringify(intent));
-	const cookies = await login();
-	const data = await updateData(intent, cookies);
-	await userSettingsUpdate(intent, cookies);
+	const ThinkEco = new ThinkEcoAPI(intent);
+	
+	const data = await ThinkEco.updateData();
+	await ThinkEco.userSettingsUpdate();
 	if (data) {
 		var text = data;
-		var cardText = `The ${intent.slots.location.value} thermostat is set to: ${intent.slots.temperature.value}`;
+		var cardText = `The ${ThinkEco.location} thermostat is set to: ${ThinkEco.temperature}`;
 	} else {
 		var text = 'That value does not exist.'
 		var cardText = text;
 	}
 
-	var heading = `${sentenceCase(intent.slots.location.value)} thermostat turned ${intent.slots.state.value}`;
-	response.tellWithCard(`${sentenceCase(intent.slots.location.value)} thermostat set to ${intent.slots.temperature.value}`, heading, cardText);
+	var heading = `${sentenceCase(ThinkEco.location)} thermostat turned ${ThinkEco.state}`;
+	response.tellWithCard(`${sentenceCase(ThinkEco.location)} thermostat set to ${ThinkEco.temperature}`, heading, cardText);
 }
 
 var handleThermostateRequest = async (intent, session, response) => {
 	console.log(JSON.stringify(intent));
-	const cookies = await login();
-	const data = await updateData(intent, cookies);
-	await switchDevice(intent, cookies);
+	const ThinkEco = new ThinkEcoAPI(intent);
+	
+	const data = await ThinkEco.updateData();
+	await ThinkEco.switchDevice();
 	if (data) {
 		var text = data;
-		var cardText = `The ${intent.slots.location.value} AC turned: ${data.modlet.isOn ? 'on' : 'off'}`;
+		var cardText = `The ${ThinkEco.location} AC turned: ${ThinkEco.state}`;
 	} else {
 		var text = 'That value does not exist.'
 		var cardText = text;
 	}
 
-	var heading = `${sentenceCase(intent.slots.location.value)} AC ${intent.slots.state.value}`;
-	response.tellWithCard(`${sentenceCase(intent.slots.location.value)} AC turned ${data.modlet.isOn ? 'on' : 'off'}`, heading, cardText);
+	var heading = `${sentenceCase(ThinkEco.location)} AC ${ThinkEco.state}`;
+	response.tellWithCard(`${sentenceCase(ThinkEco.location)} AC turned ${ThinkEco.state}`, heading, cardText);
 }
 
 var ThinkEco = function () {
